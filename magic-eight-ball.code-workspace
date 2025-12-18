@@ -1,0 +1,12 @@
+{
+	"folders": [
+		{
+			"path": "."
+		},
+		{
+			"name": "MagicEightBall Firmware",
+			"path": "./firmware"
+		}
+	],
+	"settings": {}
+}
