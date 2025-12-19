@@ -85,6 +85,9 @@ void displayVoiceInput(int progress);
 void displayThinking();
 void displayAnswer(uint8_t idx);
 
+// Helper function for text wrapping
+void drawWrappedText(const String& text, int x, int y, int max_width, int line_height);
+
 // Generate default responses.json file on SD card
 bool generateDefaultConfig() {
     File file = SD.open("/responses.json", FILE_WRITE);
@@ -303,43 +306,85 @@ uint8_t selectResponse(uint32_t seed) {
     return seed % responses.size();
 }
 
+// Helper function to draw wrapped text
+void drawWrappedText(const String& text, int x, int y, int max_width, int line_height) {
+    int cursor_x = x;
+    int cursor_y = y;
+    String current_word = "";
+
+    for (size_t i = 0; i < text.length(); i++) {
+        char c = text[i];
+
+        if (c == ' ' || c == '\n' || i == text.length() - 1) {
+            // Add last character if end of string
+            if (i == text.length() - 1 && c != ' ' && c != '\n') {
+                current_word += c;
+            }
+
+            // Check if word fits on current line
+            int word_width = M5Cardputer.Display.textWidth(current_word);
+
+            if (cursor_x + word_width > max_width && cursor_x > x) {
+                // Move to next line
+                cursor_x = x;
+                cursor_y += line_height;
+            }
+
+            // Draw the word
+            M5Cardputer.Display.setCursor(cursor_x, cursor_y);
+            M5Cardputer.Display.print(current_word);
+            cursor_x += word_width;
+
+            // Add space after word
+            if (c == ' ') {
+                cursor_x += M5Cardputer.Display.textWidth(" ");
+            } else if (c == '\n') {
+                cursor_x = x;
+                cursor_y += line_height;
+            }
+
+            current_word = "";
+        } else {
+            current_word += c;
+        }
+    }
+}
+
 // Display idle screen with prompt
 void displayIdle() {
     M5Cardputer.Display.clear();
-    M5Cardputer.Display.setCursor(0, 0);
-
-    M5Cardputer.Display.setTextSize(2);
-    M5Cardputer.Display.setTextColor(WHITE);
-    M5Cardputer.Display.drawString("MAGIC EIGHT BALL", M5Cardputer.Display.width() / 2, 20);
-
+    M5Cardputer.Display.setTextDatum(top_left);
     M5Cardputer.Display.setTextSize(1);
+
+    M5Cardputer.Display.setTextColor(WHITE);
+    M5Cardputer.Display.drawString("MAGIC EIGHT BALL", 5, 5);
+
     M5Cardputer.Display.setTextColor(CYAN);
-    M5Cardputer.Display.drawString("Type your question", M5Cardputer.Display.width() / 2, 60);
-    M5Cardputer.Display.drawString("and press [A]", M5Cardputer.Display.width() / 2, 80);
+    M5Cardputer.Display.drawString("Type your question", 5, 30);
+    M5Cardputer.Display.drawString("Press Enter or [Go]", 5, 45);
 
     M5Cardputer.Display.setTextColor(YELLOW);
-    M5Cardputer.Display.drawString("Hold [A] for voice", M5Cardputer.Display.width() / 2, 110);
+    M5Cardputer.Display.drawString("Hold [Go] for voice", 5, 70);
 }
 
 // Display text input with blinking cursor
 void displayTextInput(const String& question) {
     M5Cardputer.Display.clear();
-    M5Cardputer.Display.setCursor(0, 0);
-
+    M5Cardputer.Display.setTextDatum(top_left);
     M5Cardputer.Display.setTextSize(1);
+
     M5Cardputer.Display.setTextColor(WHITE);
-    M5Cardputer.Display.drawString("Your Question:", M5Cardputer.Display.width() / 2, 10);
+    M5Cardputer.Display.drawString("Your Question:", 5, 5);
 
     M5Cardputer.Display.setTextColor(CYAN);
     String display_text = question;
     if (cursor_visible) {
         display_text += "_";
     }
-    M5Cardputer.Display.drawString(display_text, M5Cardputer.Display.width() / 2, 40);
+    drawWrappedText(display_text, 5, 25, M5Cardputer.Display.width() - 10, 12);
 
-    M5Cardputer.Display.setTextSize(1);
     M5Cardputer.Display.setTextColor(YELLOW);
-    M5Cardputer.Display.drawString("Press [A] when done", M5Cardputer.Display.width() / 2, 100);
+    M5Cardputer.Display.drawString("Enter or [Go] to submit", 5, 110);
 }
 
 // Display voice recording progress with waveform
@@ -388,19 +433,17 @@ void displayAnswer(uint8_t idx) {
     if (idx >= responses.size()) return;
 
     M5Cardputer.Display.clear();
-    M5Cardputer.Display.setCursor(0, 0);
-
+    M5Cardputer.Display.setTextDatum(top_left);
     M5Cardputer.Display.setTextSize(1);
+
     M5Cardputer.Display.setTextColor(GREEN);
-    M5Cardputer.Display.drawString("Answer:", M5Cardputer.Display.width() / 2, 20);
+    M5Cardputer.Display.drawString("Answer:", 5, 5);
 
-    M5Cardputer.Display.setTextSize(2);
     M5Cardputer.Display.setTextColor(WHITE);
-    M5Cardputer.Display.drawString(responses[idx].text, M5Cardputer.Display.width() / 2, 60);
+    drawWrappedText(responses[idx].text, 5, 25, M5Cardputer.Display.width() - 10, 12);
 
-    M5Cardputer.Display.setTextSize(1);
     M5Cardputer.Display.setTextColor(YELLOW);
-    M5Cardputer.Display.drawString("Press [A] to continue", M5Cardputer.Display.width() / 2, 110);
+    M5Cardputer.Display.drawString("Press [Go] to continue", 5, 110);
 }
 
 void setup(void)
