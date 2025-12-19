@@ -14,6 +14,7 @@
 #include <M5Cardputer.h>
 #include <SPI.h>
 #include <SD.h>
+#include <ArduinoJson.h>
 
 #define SD_SPI_SCK_PIN  (40)
 #define SD_SPI_MISO_PIN (39)
@@ -35,6 +36,15 @@ static uint32_t file_counter     = 0;
 static uint8_t selectedFileIndex = 0;
 static std::vector<String> wavFiles;
 
+// Magic Eight Ball Response structure
+struct Response {
+    String text;
+    String wav_path;
+    String bitmap_path;
+};
+
+static std::vector<Response> responses;
+
 // WAV文件头部定义
 struct WAVHeader {
     char riff[4]           = {'R', 'I', 'F', 'F'};
@@ -52,12 +62,181 @@ struct WAVHeader {
     uint32_t dataSize      = 0;
 };
 
+// Magic Eight Ball Functions
+bool generateDefaultConfig();  // Generate default responses.json if it doesn't exist
+bool loadResponsesFromSD();     // Load responses from SD card JSON file
+
 bool saveWAVToSD(int16_t* data, size_t dataSize);  // Save the WAV file to the SD card.
 void scanAndDisplayWAVFiles(void);                 // Scan and display the WAV files on the SD card on the screen.
 bool playWAVFileFromSD(void);                      // Play the WAV files on the SD card.
 bool playSelectedWAVFile(const String& fileName);  // Play the selected WAV file.
 void playWAV(void);                                // Play the WAV file.
 void updateDisplay(std::vector<String> wavFiles, uint8_t selectedFileIndex);  // Update the displayed information.
+
+// Generate default responses.json file on SD card
+bool generateDefaultConfig() {
+    File file = SD.open("/responses.json", FILE_WRITE);
+    if (!file) {
+        printf("Failed to create responses.json\n");
+        return false;
+    }
+
+    // Create JSON document with default responses (20 classic + 10 custom)
+    JsonDocument doc;
+    JsonArray array = doc.to<JsonArray>();
+
+    // Classic positive responses (0-9)
+    array.add(JsonObject());
+    array[0]["text"] = "It is certain";
+
+    array.add(JsonObject());
+    array[1]["text"] = "It is decidedly so";
+
+    array.add(JsonObject());
+    array[2]["text"] = "Without a doubt";
+
+    array.add(JsonObject());
+    array[3]["text"] = "Yes definitely";
+
+    array.add(JsonObject());
+    array[4]["text"] = "You may rely on it";
+
+    array.add(JsonObject());
+    array[5]["text"] = "As I see it yes";
+
+    array.add(JsonObject());
+    array[6]["text"] = "Most likely";
+
+    array.add(JsonObject());
+    array[7]["text"] = "Outlook good";
+
+    array.add(JsonObject());
+    array[8]["text"] = "Yes";
+
+    array.add(JsonObject());
+    array[9]["text"] = "Signs point to yes";
+
+    // Classic non-committal responses (10-14)
+    array.add(JsonObject());
+    array[10]["text"] = "Reply hazy try again";
+
+    array.add(JsonObject());
+    array[11]["text"] = "Ask again later";
+
+    array.add(JsonObject());
+    array[12]["text"] = "Better not tell you now";
+
+    array.add(JsonObject());
+    array[13]["text"] = "Cannot predict now";
+
+    array.add(JsonObject());
+    array[14]["text"] = "Concentrate and ask again";
+
+    // Classic negative responses (15-19)
+    array.add(JsonObject());
+    array[15]["text"] = "Don't count on it";
+
+    array.add(JsonObject());
+    array[16]["text"] = "My reply is no";
+
+    array.add(JsonObject());
+    array[17]["text"] = "My sources say no";
+
+    array.add(JsonObject());
+    array[18]["text"] = "Outlook not so good";
+
+    array.add(JsonObject());
+    array[19]["text"] = "Very doubtful";
+
+    // Custom creative responses (20-29)
+    array.add(JsonObject());
+    array[20]["text"] = "The circuits say yes";
+
+    array.add(JsonObject());
+    array[21]["text"] = "My ESP32 brain says no";
+
+    array.add(JsonObject());
+    array[22]["text"] = "Error 404: Answer not found";
+
+    array.add(JsonObject());
+    array[23]["text"] = "Buffering... yes!";
+
+    array.add(JsonObject());
+    array[24]["text"] = "Have you tried turning it off and on again?";
+
+    array.add(JsonObject());
+    array[25]["text"] = "The SD card has spoken: absolutely";
+
+    array.add(JsonObject());
+    array[26]["text"] = "My microphone heard a yes in your voice";
+
+    array.add(JsonObject());
+    array[27]["text"] = "The waveform suggests otherwise";
+
+    array.add(JsonObject());
+    array[28]["text"] = "Quantum uncertainty says maybe";
+
+    array.add(JsonObject());
+    array[29]["text"] = "Stack overflow: ask a simpler question";
+
+    // Write JSON to file
+    if (serializeJson(doc, file) == 0) {
+        printf("Failed to write JSON to file\n");
+        file.close();
+        return false;
+    }
+
+    file.close();
+    printf("Created default responses.json with 30 responses\n");
+    return true;
+}
+
+// Load responses from SD card JSON file
+bool loadResponsesFromSD() {
+    File file = SD.open("/responses.json", FILE_READ);
+    if (!file) {
+        printf("responses.json not found, will generate default\n");
+        return false;
+    }
+
+    // Parse JSON file
+    JsonDocument doc;
+    DeserializationError error = deserializeJson(doc, file);
+    file.close();
+
+    if (error) {
+        printf("Failed to parse responses.json: %s\n", error.c_str());
+        return false;
+    }
+
+    // Check if root is an array
+    if (!doc.is<JsonArray>()) {
+        printf("responses.json must contain an array\n");
+        return false;
+    }
+
+    JsonArray array = doc.as<JsonArray>();
+    responses.clear();
+
+    // Load each response
+    for (JsonObject obj : array) {
+        Response r;
+        r.text = obj["text"] | "";
+        r.wav_path = obj["wav"] | "";
+        r.bitmap_path = obj["bitmap"] | "";
+
+        if (r.text.isEmpty()) {
+            printf("Skipping response with empty text\n");
+            continue;
+        }
+
+        responses.push_back(r);
+    }
+
+    printf("Loaded %d responses from SD card\n", responses.size());
+    return responses.size() > 0;
+}
+
 void setup(void)
 {
     auto cfg = M5.config();
@@ -94,6 +273,36 @@ void setup(void)
     }
     uint64_t cardSize = SD.cardSize() / (1024 * 1024);
     printf("SD Card Size: %lluMB\r\n", cardSize);
+
+    // Load Magic Eight Ball responses from JSON config
+    if (!loadResponsesFromSD()) {
+        printf("Generating default responses.json...\r\n");
+        if (generateDefaultConfig()) {
+            // Try loading again
+            if (!loadResponsesFromSD()) {
+                printf("ERROR: Failed to load responses even after generating default\r\n");
+                while (1);  // Halt if we can't load responses
+            }
+        } else {
+            printf("ERROR: Failed to generate default config\r\n");
+            while (1);  // Halt if we can't generate config
+        }
+    }
+
+    // Print loaded responses for debugging
+    for (size_t i = 0; i < responses.size() && i < 5; i++) {
+        printf("  Response %d: %s", i, responses[i].text.c_str());
+        if (!responses[i].wav_path.isEmpty()) {
+            printf(" [wav: %s]", responses[i].wav_path.c_str());
+        }
+        if (!responses[i].bitmap_path.isEmpty()) {
+            printf(" [bmp: %s]", responses[i].bitmap_path.c_str());
+        }
+        printf("\r\n");
+    }
+    if (responses.size() > 5) {
+        printf("  ... and %d more responses\r\n", responses.size() - 5);
+    }
 
     rec_data = (typeof(rec_data))heap_caps_malloc(record_size * sizeof(int16_t), MALLOC_CAP_8BIT);
     memset(rec_data, 0, record_size * sizeof(int16_t));
