@@ -51,6 +51,7 @@ static uint8_t current_response_idx = 0;
 static unsigned long state_timer = 0;
 static bool cursor_visible = true;
 static unsigned long last_cursor_blink = 0;
+static bool audio_played = false;
 
 // WAV文件头部定义
 struct WAVHeader {
@@ -87,6 +88,9 @@ void displayAnswer(uint8_t idx);
 
 // Helper function for text wrapping
 void drawWrappedText(const String& text, int x, int y, int max_width, int line_height);
+
+// Audio playback function
+void playResponseAudio(const String& wav_path);
 
 // Generate default responses.json file on SD card
 bool generateDefaultConfig() {
@@ -430,7 +434,7 @@ void displayThinking() {
     M5Cardputer.Display.drawString("Thinking" + dots, 5, M5Cardputer.Display.height() / 2 - 10);
 }
 
-// Display answer (text only for now, audio/bitmap in later phases)
+// Display answer with audio/bitmap indicators
 void displayAnswer(uint8_t idx) {
     if (idx >= responses.size()) return;
 
@@ -439,13 +443,82 @@ void displayAnswer(uint8_t idx) {
     M5Cardputer.Display.setTextSize(1);
 
     M5Cardputer.Display.setTextColor(GREEN);
-    M5Cardputer.Display.drawString("Answer:", 5, 5);
+    String header = "Answer:";
+    if (!responses[idx].wav_path.isEmpty()) {
+        header += " [AUDIO]";
+    }
+    M5Cardputer.Display.drawString(header, 5, 5);
 
     M5Cardputer.Display.setTextColor(WHITE);
     drawWrappedText(responses[idx].text, 5, 25, M5Cardputer.Display.width() - 10, 15);
 
     M5Cardputer.Display.setTextColor(YELLOW);
     M5Cardputer.Display.drawString("Press [Go] to continue", 5, 110);
+}
+
+// Play response audio from SD card
+void playResponseAudio(const String& wav_path) {
+    if (wav_path.isEmpty()) {
+        printf("No audio file specified\n");
+        return;
+    }
+
+    File file = SD.open(wav_path.c_str());
+    if (!file) {
+        printf("Audio file not found: %s\n", wav_path.c_str());
+        return;
+    }
+
+    // Get file size and allocate buffer
+    size_t file_size = file.size();
+    if (file_size < 44) {
+        printf("Invalid WAV file (too small)\n");
+        file.close();
+        return;
+    }
+
+    // Skip WAV header (44 bytes)
+    file.seek(44);
+    size_t audio_data_size = file_size - 44;
+
+    // Allocate buffer for audio data
+    int16_t* audio_buf = (int16_t*)heap_caps_malloc(audio_data_size, MALLOC_CAP_8BIT);
+    if (!audio_buf) {
+        printf("Failed to allocate audio buffer (%d bytes)\n", audio_data_size);
+        file.close();
+        return;
+    }
+
+    // Read audio data
+    size_t bytes_read = file.read((uint8_t*)audio_buf, audio_data_size);
+    file.close();
+
+    if (bytes_read != audio_data_size) {
+        printf("Failed to read complete audio file\n");
+        free(audio_buf);
+        return;
+    }
+
+    // Stop microphone and start speaker
+    M5Cardputer.Mic.end();
+    M5Cardputer.Speaker.begin();
+    M5Cardputer.Speaker.setVolume(255);
+
+    // Play audio
+    size_t sample_count = audio_data_size / sizeof(int16_t);
+    printf("Playing audio: %s (%d samples)\n", wav_path.c_str(), sample_count);
+    M5Cardputer.Speaker.playRaw(audio_buf, sample_count, record_samplerate);
+
+    // Wait for playback to complete
+    while (M5Cardputer.Speaker.isPlaying()) {
+        delay(10);
+        M5Cardputer.update(); // Allow button presses during playback
+    }
+
+    // Clean up
+    M5Cardputer.Speaker.end();
+    free(audio_buf);
+    printf("Audio playback complete\n");
 }
 
 void setup(void)
@@ -657,16 +730,25 @@ void loop(void)
             if (millis() - state_timer > 2000) {
                 current_state = SHOWING_ANSWER;
                 state_timer = millis();
+                audio_played = false; // Reset audio flag
                 displayAnswer(current_response_idx);
             }
             break;
         }
 
         case SHOWING_ANSWER: {
-            // Show answer, wait for button A or auto-return after 5 seconds
+            // Play audio on first entry to this state
+            if (!audio_played) {
+                audio_played = true;
+                playResponseAudio(responses[current_response_idx].wav_path);
+                state_timer = millis(); // Reset timer after audio completes
+            }
+
+            // Wait for button press or auto-return after 5 seconds
             if (M5Cardputer.BtnA.wasPressed() || (millis() - state_timer > 5000)) {
                 current_state = IDLE;
                 current_question = "";
+                audio_played = false;
                 displayIdle();
             }
             break;
