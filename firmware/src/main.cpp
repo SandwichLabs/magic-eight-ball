@@ -368,7 +368,7 @@ void displayIdle() {
     M5Cardputer.Display.drawString("Press Enter or [Go]", 5, 45);
 
     M5Cardputer.Display.setTextColor(YELLOW);
-    M5Cardputer.Display.drawString("Hold [Go] for voice", 5, 70);
+    M5Cardputer.Display.drawString("Press [Go] for voice", 5, 70);
 }
 
 // Display text input with blinking cursor
@@ -632,21 +632,15 @@ void loop(void)
                 }
             }
 
-            // Check for button A press (short) or hold (long for voice)
+            // Check for button press to start voice input
             if (M5Cardputer.BtnA.wasPressed()) {
+                // Single press - voice input
+                current_state = VOICE_INPUT;
+                rec_record_idx = 2;
+                draw_record_idx = 0;
+                M5Cardputer.Mic.begin();
                 state_timer = millis();
-            }
-            if (M5Cardputer.BtnA.wasReleased()) {
-                unsigned long hold_time = millis() - state_timer;
-                if (hold_time > 500) {
-                    // Long press - voice input
-                    current_state = VOICE_INPUT;
-                    rec_record_idx = 2;
-                    draw_record_idx = 0;
-                    M5Cardputer.Mic.begin();
-                    state_timer = millis();
-                    displayVoiceInput(0);
-                }
+                displayVoiceInput(0);
             }
             break;
         }
