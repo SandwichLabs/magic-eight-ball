@@ -43,6 +43,15 @@ struct Response {
 
 static std::vector<Response> responses;
 
+// State machine for Magic Eight Ball
+enum AppState { IDLE, TEXT_INPUT, VOICE_INPUT, THINKING, SHOWING_ANSWER };
+static AppState current_state = IDLE;
+static String current_question = "";
+static uint8_t current_response_idx = 0;
+static unsigned long state_timer = 0;
+static bool cursor_visible = true;
+static unsigned long last_cursor_blink = 0;
+
 // WAV文件头部定义
 struct WAVHeader {
     char riff[4]           = {'R', 'I', 'F', 'F'};
@@ -63,6 +72,18 @@ struct WAVHeader {
 // Magic Eight Ball Functions
 bool generateDefaultConfig();  // Generate default responses.json if it doesn't exist
 bool loadResponsesFromSD();     // Load responses from SD card JSON file
+
+// Randomness generation functions
+uint32_t generateSeedFromText(const String& question);
+uint32_t generateSeedFromAudio(int16_t* audio_data, size_t num_samples);
+uint8_t selectResponse(uint32_t seed);
+
+// Display functions
+void displayIdle();
+void displayTextInput(const String& question);
+void displayVoiceInput(int progress);
+void displayThinking();
+void displayAnswer(uint8_t idx);
 
 // Generate default responses.json file on SD card
 bool generateDefaultConfig() {
@@ -228,6 +249,160 @@ bool loadResponsesFromSD() {
     return responses.size() > 0;
 }
 
+// Generate random seed from text input using DJB2 hash + timestamp
+uint32_t generateSeedFromText(const String& question) {
+    uint32_t hash = 5381;
+    for (size_t i = 0; i < question.length(); i++) {
+        hash = ((hash << 5) + hash) + tolower(question[i]);
+    }
+    hash ^= millis(); // Mix in timestamp
+    // Additional mixing for better distribution
+    hash ^= (hash >> 16);
+    hash *= 0x85ebca6b;
+    hash ^= (hash >> 13);
+    return hash;
+}
+
+// Generate random seed from audio waveform analysis
+uint32_t generateSeedFromAudio(int16_t* audio_data, size_t num_samples) {
+    uint32_t seed = 0;
+
+    // Peak amplitude
+    int16_t peak = 0;
+    for (size_t i = 0; i < num_samples; i++) {
+        int16_t abs_val = abs(audio_data[i]);
+        if (abs_val > peak) peak = abs_val;
+    }
+    seed ^= (uint32_t)peak;
+
+    // Zero-crossing count
+    uint16_t zero_crossings = 0;
+    for (size_t i = 1; i < num_samples; i++) {
+        if ((audio_data[i-1] < 0 && audio_data[i] >= 0) ||
+            (audio_data[i-1] >= 0 && audio_data[i] < 0)) {
+            zero_crossings++;
+        }
+    }
+    seed ^= ((uint32_t)zero_crossings << 8);
+
+    // RMS energy
+    uint64_t sum_squares = 0;
+    for (size_t i = 0; i < num_samples; i++) {
+        sum_squares += (int32_t)audio_data[i] * audio_data[i];
+    }
+    uint32_t rms = sqrt(sum_squares / num_samples);
+    seed ^= (rms << 16);
+
+    seed ^= millis(); // Mix in timestamp
+    return seed;
+}
+
+// Select response index based on seed
+uint8_t selectResponse(uint32_t seed) {
+    if (responses.size() == 0) return 0;
+    return seed % responses.size();
+}
+
+// Display idle screen with prompt
+void displayIdle() {
+    M5Cardputer.Display.clear();
+    M5Cardputer.Display.setCursor(0, 0);
+
+    M5Cardputer.Display.setTextSize(2);
+    M5Cardputer.Display.setTextColor(WHITE);
+    M5Cardputer.Display.drawString("MAGIC EIGHT BALL", M5Cardputer.Display.width() / 2, 20);
+
+    M5Cardputer.Display.setTextSize(1);
+    M5Cardputer.Display.setTextColor(CYAN);
+    M5Cardputer.Display.drawString("Type your question", M5Cardputer.Display.width() / 2, 60);
+    M5Cardputer.Display.drawString("and press [A]", M5Cardputer.Display.width() / 2, 80);
+
+    M5Cardputer.Display.setTextColor(YELLOW);
+    M5Cardputer.Display.drawString("Hold [A] for voice", M5Cardputer.Display.width() / 2, 110);
+}
+
+// Display text input with blinking cursor
+void displayTextInput(const String& question) {
+    M5Cardputer.Display.clear();
+    M5Cardputer.Display.setCursor(0, 0);
+
+    M5Cardputer.Display.setTextSize(1);
+    M5Cardputer.Display.setTextColor(WHITE);
+    M5Cardputer.Display.drawString("Your Question:", M5Cardputer.Display.width() / 2, 10);
+
+    M5Cardputer.Display.setTextColor(CYAN);
+    String display_text = question;
+    if (cursor_visible) {
+        display_text += "_";
+    }
+    M5Cardputer.Display.drawString(display_text, M5Cardputer.Display.width() / 2, 40);
+
+    M5Cardputer.Display.setTextSize(1);
+    M5Cardputer.Display.setTextColor(YELLOW);
+    M5Cardputer.Display.drawString("Press [A] when done", M5Cardputer.Display.width() / 2, 100);
+}
+
+// Display voice recording progress with waveform
+void displayVoiceInput(int progress) {
+    M5Cardputer.Display.clear();
+    M5Cardputer.Display.setCursor(0, 0);
+
+    M5Cardputer.Display.setTextSize(1);
+    M5Cardputer.Display.setTextColor(WHITE);
+    M5Cardputer.Display.drawString("Recording...", M5Cardputer.Display.width() / 2, 10);
+
+    // Progress bar
+    int bar_width = (M5Cardputer.Display.width() - 40) * progress / 100;
+    M5Cardputer.Display.fillRect(20, 40, bar_width, 10, GREEN);
+    M5Cardputer.Display.drawRect(20, 40, M5Cardputer.Display.width() - 40, 10, WHITE);
+
+    // Draw simple waveform from current buffer
+    int y_center = M5Cardputer.Display.height() / 2 + 20;
+    for (int x = 0; x < record_length && x < M5Cardputer.Display.width(); x++) {
+        int16_t sample = rec_data[draw_record_idx * record_length + x];
+        int y = y_center + (sample / 2048); // Scale down for display
+        M5Cardputer.Display.drawPixel(x, y, CYAN);
+    }
+}
+
+// Display thinking animation
+void displayThinking() {
+    M5Cardputer.Display.clear();
+    M5Cardputer.Display.setCursor(0, 0);
+
+    M5Cardputer.Display.setTextSize(2);
+    M5Cardputer.Display.setTextColor(MAGENTA);
+
+    // Animate dots based on time
+    String dots = "";
+    int dot_count = (millis() / 500) % 4;
+    for (int i = 0; i < dot_count; i++) {
+        dots += ".";
+    }
+
+    M5Cardputer.Display.drawString("Thinking" + dots, M5Cardputer.Display.width() / 2, M5Cardputer.Display.height() / 2 - 10);
+}
+
+// Display answer (text only for now, audio/bitmap in later phases)
+void displayAnswer(uint8_t idx) {
+    if (idx >= responses.size()) return;
+
+    M5Cardputer.Display.clear();
+    M5Cardputer.Display.setCursor(0, 0);
+
+    M5Cardputer.Display.setTextSize(1);
+    M5Cardputer.Display.setTextColor(GREEN);
+    M5Cardputer.Display.drawString("Answer:", M5Cardputer.Display.width() / 2, 20);
+
+    M5Cardputer.Display.setTextSize(2);
+    M5Cardputer.Display.setTextColor(WHITE);
+    M5Cardputer.Display.drawString(responses[idx].text, M5Cardputer.Display.width() / 2, 60);
+
+    M5Cardputer.Display.setTextSize(1);
+    M5Cardputer.Display.setTextColor(YELLOW);
+    M5Cardputer.Display.drawString("Press [A] to continue", M5Cardputer.Display.width() / 2, 110);
+}
+
 void setup(void)
 {
     auto cfg = M5.config();
@@ -301,7 +476,8 @@ void setup(void)
     M5Cardputer.Speaker.end();
     M5Cardputer.Mic.begin();
 
-    // Display will be initialized in Phase 3 with displayIdle()
+    // Show idle screen
+    displayIdle();
     printf("Magic Eight Ball initialized\r\n");
 }
 
@@ -309,8 +485,148 @@ void loop(void)
 {
     M5Cardputer.update();
 
-    // State machine placeholder - will be implemented in Phase 3
-    // TODO: Implement IDLE, TEXT_INPUT, VOICE_INPUT, THINKING, SHOWING_ANSWER states
+    // Handle cursor blinking for text input
+    if (millis() - last_cursor_blink > 500) {
+        cursor_visible = !cursor_visible;
+        last_cursor_blink = millis();
+        if (current_state == TEXT_INPUT) {
+            displayTextInput(current_question);
+        }
+    }
+
+    switch (current_state) {
+        case IDLE: {
+            // Check for keyboard input
+            if (M5Cardputer.Keyboard.isChange()) {
+                if (M5Cardputer.Keyboard.isPressed()) {
+                    Keyboard_Class::KeysState status = M5Cardputer.Keyboard.keysState();
+
+                    // Check if any printable key was pressed
+                    for (auto key : status.word) {
+                        if (key >= 0x20 && key <= 0x7E) { // Printable ASCII
+                            current_question = "";
+                            current_question += (char)key;
+                            current_state = TEXT_INPUT;
+                            displayTextInput(current_question);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // Check for button A press (short) or hold (long for voice)
+            if (M5Cardputer.BtnA.wasPressed()) {
+                state_timer = millis();
+            }
+            if (M5Cardputer.BtnA.wasReleased()) {
+                unsigned long hold_time = millis() - state_timer;
+                if (hold_time > 500) {
+                    // Long press - voice input
+                    current_state = VOICE_INPUT;
+                    rec_record_idx = 2;
+                    draw_record_idx = 0;
+                    M5Cardputer.Mic.begin();
+                    state_timer = millis();
+                    displayVoiceInput(0);
+                }
+            }
+            break;
+        }
+
+        case TEXT_INPUT: {
+            // Handle keyboard input
+            if (M5Cardputer.Keyboard.isChange()) {
+                if (M5Cardputer.Keyboard.isPressed()) {
+                    Keyboard_Class::KeysState status = M5Cardputer.Keyboard.keysState();
+
+                    // Handle special keys
+                    if (status.del && current_question.length() > 0) {
+                        current_question.remove(current_question.length() - 1);
+                        displayTextInput(current_question);
+                    } else if (status.enter) {
+                        // Submit question
+                        if (current_question.length() > 0) {
+                            uint32_t seed = generateSeedFromText(current_question);
+                            current_response_idx = selectResponse(seed);
+                            current_state = THINKING;
+                            state_timer = millis();
+                            displayThinking();
+                        }
+                    } else {
+                        // Add printable characters
+                        for (auto key : status.word) {
+                            if (key >= 0x20 && key <= 0x7E) { // Printable ASCII
+                                current_question += (char)key;
+                                displayTextInput(current_question);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Check for button A press (submit)
+            if (M5Cardputer.BtnA.wasPressed()) {
+                if (current_question.length() > 0) {
+                    uint32_t seed = generateSeedFromText(current_question);
+                    current_response_idx = selectResponse(seed);
+                    current_state = THINKING;
+                    state_timer = millis();
+                    displayThinking();
+                }
+            }
+            break;
+        }
+
+        case VOICE_INPUT: {
+            // Record audio for 2 seconds
+            if (M5Cardputer.Mic.isEnabled()) {
+                if (M5Cardputer.Mic.record(rec_data, record_length, record_samplerate)) {
+                    if (rec_record_idx < record_number) {
+                        rec_record_idx++;
+                        draw_record_idx = rec_record_idx - 2;
+
+                        // Update progress
+                        int progress = (rec_record_idx * 100) / record_number;
+                        displayVoiceInput(progress);
+                    } else {
+                        // Recording complete
+                        M5Cardputer.Mic.end();
+
+                        // Generate seed from audio
+                        uint32_t seed = generateSeedFromAudio(rec_data, record_size);
+                        current_response_idx = selectResponse(seed);
+
+                        current_state = THINKING;
+                        state_timer = millis();
+                        displayThinking();
+                    }
+                }
+            }
+            break;
+        }
+
+        case THINKING: {
+            // Show thinking animation for 2 seconds
+            displayThinking(); // Update animation
+
+            if (millis() - state_timer > 2000) {
+                current_state = SHOWING_ANSWER;
+                state_timer = millis();
+                displayAnswer(current_response_idx);
+            }
+            break;
+        }
+
+        case SHOWING_ANSWER: {
+            // Show answer, wait for button A or auto-return after 5 seconds
+            if (M5Cardputer.BtnA.wasPressed() || (millis() - state_timer > 5000)) {
+                current_state = IDLE;
+                current_question = "";
+                displayIdle();
+            }
+            break;
+        }
+    }
 
     delay(10);  // Small delay to prevent tight loop
 }
