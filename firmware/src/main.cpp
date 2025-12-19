@@ -381,7 +381,7 @@ void displayTextInput(const String& question) {
     if (cursor_visible) {
         display_text += "_";
     }
-    drawWrappedText(display_text, 5, 25, M5Cardputer.Display.width() - 10, 12);
+    drawWrappedText(display_text, 5, 25, M5Cardputer.Display.width() - 10, 15);
 
     M5Cardputer.Display.setTextColor(YELLOW);
     M5Cardputer.Display.drawString("Enter or [Go] to submit", 5, 110);
@@ -390,32 +390,34 @@ void displayTextInput(const String& question) {
 // Display voice recording progress with waveform
 void displayVoiceInput(int progress) {
     M5Cardputer.Display.clear();
-    M5Cardputer.Display.setCursor(0, 0);
-
+    M5Cardputer.Display.setTextDatum(top_left);
     M5Cardputer.Display.setTextSize(1);
+
     M5Cardputer.Display.setTextColor(WHITE);
-    M5Cardputer.Display.drawString("Recording...", M5Cardputer.Display.width() / 2, 10);
+    M5Cardputer.Display.drawString("Recording...", 5, 5);
 
     // Progress bar
-    int bar_width = (M5Cardputer.Display.width() - 40) * progress / 100;
-    M5Cardputer.Display.fillRect(20, 40, bar_width, 10, GREEN);
-    M5Cardputer.Display.drawRect(20, 40, M5Cardputer.Display.width() - 40, 10, WHITE);
+    int bar_width = (M5Cardputer.Display.width() - 20) * progress / 100;
+    M5Cardputer.Display.fillRect(5, 30, bar_width, 10, GREEN);
+    M5Cardputer.Display.drawRect(5, 30, M5Cardputer.Display.width() - 10, 10, WHITE);
 
-    // Draw simple waveform from current buffer
-    int y_center = M5Cardputer.Display.height() / 2 + 20;
+    // Draw waveform from current buffer
+    int y_center = M5Cardputer.Display.height() / 2 + 10;
     for (int x = 0; x < record_length && x < M5Cardputer.Display.width(); x++) {
-        int16_t sample = rec_data[draw_record_idx * record_length + x];
-        int y = y_center + (sample / 2048); // Scale down for display
-        M5Cardputer.Display.drawPixel(x, y, CYAN);
+        size_t idx = draw_record_idx * record_length + x;
+        if (idx < record_size) {
+            int16_t sample = rec_data[idx];
+            int y = y_center + (sample / 2048); // Scale down for display
+            M5Cardputer.Display.drawPixel(x, y, CYAN);
+        }
     }
 }
 
 // Display thinking animation
 void displayThinking() {
     M5Cardputer.Display.clear();
-    M5Cardputer.Display.setCursor(0, 0);
-
-    M5Cardputer.Display.setTextSize(2);
+    M5Cardputer.Display.setTextDatum(top_left);
+    M5Cardputer.Display.setTextSize(1);
     M5Cardputer.Display.setTextColor(MAGENTA);
 
     // Animate dots based on time
@@ -425,7 +427,7 @@ void displayThinking() {
         dots += ".";
     }
 
-    M5Cardputer.Display.drawString("Thinking" + dots, M5Cardputer.Display.width() / 2, M5Cardputer.Display.height() / 2 - 10);
+    M5Cardputer.Display.drawString("Thinking" + dots, 5, M5Cardputer.Display.height() / 2 - 10);
 }
 
 // Display answer (text only for now, audio/bitmap in later phases)
@@ -440,7 +442,7 @@ void displayAnswer(uint8_t idx) {
     M5Cardputer.Display.drawString("Answer:", 5, 5);
 
     M5Cardputer.Display.setTextColor(WHITE);
-    drawWrappedText(responses[idx].text, 5, 25, M5Cardputer.Display.width() - 10, 12);
+    drawWrappedText(responses[idx].text, 5, 25, M5Cardputer.Display.width() - 10, 15);
 
     M5Cardputer.Display.setTextColor(YELLOW);
     M5Cardputer.Display.drawString("Press [Go] to continue", 5, 110);
