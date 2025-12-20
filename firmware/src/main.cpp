@@ -463,9 +463,23 @@ void playResponseAudio(const String& wav_path) {
         return;
     }
 
+    // Try path as-is first
     File file = SD.open(wav_path.c_str());
+
+    // If that fails, try with leading slash
+    if (!file && !wav_path.startsWith("/")) {
+        String alt_path = "/" + wav_path;
+        file = SD.open(alt_path.c_str());
+    }
+
     if (!file) {
         printf("Audio file not found: %s\n", wav_path.c_str());
+
+        // Show error on screen
+        M5Cardputer.Display.setTextColor(RED);
+        M5Cardputer.Display.drawString("Audio file not found!", 5, 90);
+        M5Cardputer.Display.drawString(wav_path, 5, 105);
+        delay(2000);
         return;
     }
 
@@ -474,6 +488,11 @@ void playResponseAudio(const String& wav_path) {
     if (file_size < 44) {
         printf("Invalid WAV file (too small)\n");
         file.close();
+
+        // Show error on screen
+        M5Cardputer.Display.setTextColor(RED);
+        M5Cardputer.Display.drawString("WAV file too small", 5, 90);
+        delay(2000);
         return;
     }
 
@@ -481,11 +500,20 @@ void playResponseAudio(const String& wav_path) {
     file.seek(44);
     size_t audio_data_size = file_size - 44;
 
+    // Show "Playing..." message
+    M5Cardputer.Display.setTextColor(CYAN);
+    M5Cardputer.Display.drawString("Playing audio...", 5, 90);
+
     // Allocate buffer for audio data
     int16_t* audio_buf = (int16_t*)heap_caps_malloc(audio_data_size, MALLOC_CAP_8BIT);
     if (!audio_buf) {
         printf("Failed to allocate audio buffer (%d bytes)\n", audio_data_size);
         file.close();
+
+        // Show error on screen
+        M5Cardputer.Display.setTextColor(RED);
+        M5Cardputer.Display.drawString("Memory allocation failed", 5, 90);
+        delay(2000);
         return;
     }
 
@@ -496,6 +524,11 @@ void playResponseAudio(const String& wav_path) {
     if (bytes_read != audio_data_size) {
         printf("Failed to read complete audio file\n");
         free(audio_buf);
+
+        // Show error on screen
+        M5Cardputer.Display.setTextColor(RED);
+        M5Cardputer.Display.drawString("Failed to read audio", 5, 90);
+        delay(2000);
         return;
     }
 
